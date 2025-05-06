@@ -118,10 +118,65 @@ target("iso64")
         print("ISO image created at: %s", iso_file)
     end)
 
+target("arm64")
+    set_kind("binary")
+    set_toolchains("clang")
+    set_default(false)
+
+    add_cflags("-target arm64-freestanding")
+    add_ldflags("-target arm64-freestanding")
+
+    add_files("src/arm64/**/*.c")
+    add_files("src/arm64/**/*.S")
+
+    add_includedirs("src/arm64/include")
+    add_includedirs("src/arm64/include/types")
+
+    add_cflags("-nostdinc", "-flto")
+    add_cflags("-Wno-unused-parameter","-Wno-unused-function")
+    add_ldflags("-static", "-nostdlib", "-flto", "-fuse-ld=lld")
+
+    before_build(function (target)
+      local hash = try { function() return os.iorun("git rev-parse --short HEAD") end }
+        if hash then
+          hash = hash:trim()
+          target:add("defines", "GIT_VERSION=\"" .. hash .. "\"")
+        end
+    end)
+
+    add_ldflags("-T src/arm64/linker.ld", "-e kmain")
+
+target("iso64arm")
+    set_kind("phony")
+    add_deps("arm64")
+    set_default(false)
+
+    on_build(function (target)
+            import("core.project.project")
+
+            local iso_dir = "$(buildir)/iso_dir"
+            os.cp("assets/sys", iso_dir .. "/sys")
+            os.cp("assets/limine.conf", iso_dir .. "/limine.conf")
+            os.cp("assets/limine-uefi-cd.bin", iso_dir .. "/limine-uefi-cd.bin")
+
+            local target = project.target("arm64")
+            os.cp(target:targetfile(), iso_dir .. "/sys/cpkrnl.elf")
+
+            local iso_file = "$(buildir)/CoolPotOS.iso"
+            os.run("xorriso -as mkisofs -efi-boot-part --efi-boot-image --protective-msdos-label " ..
+            "-no-emul-boot -boot-load-size 4 -boot-info-table -hfsplus "..
+            "-R -r -J -apm-block-size 2048 "..
+            "-exclude ovmf-code.fd "..
+            "--efi-boot limine-uefi-cd.bin "..
+            "%s -o %s", iso_dir, iso_file)
+            print("ISO image created at: %s", iso_file)
+        end)
+
 target("default_build")
     set_kind("phony")
-    add_deps("iso64")
+    --add_deps("iso64")
     --add_deps("iso32")
+    add_deps("iso64arm")
     set_default(true)
 
     on_run(function (target)
@@ -150,7 +205,7 @@ target("default_build")
             "-cdrom", config.buildir() .. "/CoolPotOS.iso",
             "-audiodev", "sdl,id=audio0", "-device", "sb16,audiodev=audio0",
         }
-        os.execv("qemu-system-x86_64 " , flags)
+        os.execv("qemu-system-arm64 " , flags)
        -- os.execv("echo " , flags)
 
         -- i386 xmake run
